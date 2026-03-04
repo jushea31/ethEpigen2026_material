@@ -1,0 +1,59 @@
+---
+title: "assignment"
+output: html_document
+date: "2026-03-01"
+---
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r}
+suppressPackageStartupMessages({
+  library(AnnotationHub) 
+  library(ensembldb)     
+  library(GenomicRanges) 
+  library(epiwraps)     
+})
+```
+
+#Mouse EnsDb version 102, genome build GRCm38
+```{r}
+ah <- AnnotationHub() 
+query_results <- query(ah, c("Mus Musculus", "EnsDb","102", "GRCm38"))  
+ensdb <- ah[["AH89211"]]
+ensdb
+```
+
+#Mouse genome sequence in 2 bit
+```{r}
+twobit_resultsmouse <- query(ah, c("Mus musculus", "GRCm38", "TwoBitFile","dna_sm"))
+twobit_resultsmouse
+dna_smmouse <- ah[["AH49775"]] #one of the options
+dna_smmouse
+```
+
+#Drosophilia genome sequence in 2 bit
+```{r}
+twobit_resultsdroso <- query(ah, c("Drosophila", "BDGP6", "TwoBitFile","dna_sm"))
+twobit_resultsdroso
+dna_smdroso <- ah[["AH49674"]]  #one of the options
+dna_smdroso
+```
+
+#Number of gene IDs & gene symbols in protein-coding genes
+```{r}
+genes<- genes(ensdb)
+protein_coding <- genes[genes$gene_biotype=="protein_coding"] 
+head(protein_coding)
+gene_IDs <- length(unique(protein_coding$gene_id))
+gene_symbols <- length(unique(protein_coding$gene_name))
+gene_IDs
+gene_symbols
+```
+
+#Plot distribution of spliced length of protien-coding transcripts
+```{r}
+exons_codingTranscripts <- exonsBy(ensdb, "tx", filter= TxBiotypeFilter("protein_coding" ))
+spliced_length <- vapply(exons_codingTranscripts, function(x) sum(width(reduce(x))),numeric(1)) #reduce to merge overlaps
+hist(spliced_length, breaks = 60, xlim= c(0,20000), main = "Spliced length of protein-coding transcripts",xlab = "Length (bp)")
+```
