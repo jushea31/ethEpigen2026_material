@@ -1,0 +1,87 @@
+---
+title: "assignment"
+output: html_document
+date: "2026-03-06"
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+
+```{r}
+suppressPackageStartupMessages({
+  library(AnnotationHub)
+  library(Rsubread)      # read alignment
+  library(rtracklayer)   # read/write genomic file formats
+  library(Biostrings)    # handling sequences
+  library(Rfastp)        # read QC/trimming
+  library(epiwraps)
+  library(ensembldb)     # to manipulate ensembl gene annotations
+  library(GenomicRanges)
+})
+ah <- AnnotationHub()
+```
+
+#Dowloading ChIP-seq for CTCF
+```{r, eval=FALSE}
+options(timeout=3600)
+dir.create("raw")
+download.file("https://www.encodeproject.org/files/ENCFF127RRR/@@download/ENCFF127RRR.fastq.gz", "raw/ctcf.fastq.gz", mode="wb")
+list.files("raw")
+```
+
+#Trim
+```{r}
+dir.create("trimmed")
+qc <- Rfastp::rfastp("raw/ctcf.fastq.gz",thread=4,outputFastq="trimmed/ctcf")
+```
+
+```{r, eval=FALSE}
+genome <- ah[["AH49674"]]
+dir.create("BDGP6_genome")
+export(import.2bit(genome), "BDGP6_genome/genome.fasta.gz", compress=TRUE)
+Rsubread::buildindex("BDGP6_genome/rsubread", reference="BDGP6_genome/genome.fasta.gz")
+list.files("BDGP6_genome")
+```
+
+# Alignment: bam file
+```{r}
+dir.create("aligned")
+align.stats <- Rsubread::align(index="BDGP6_genome/rsubread", type="dna",
+                               readfile1=c("trimmed/ctcf_R1.fastq.gz"),
+                               output_file=c("aligned/ctcf.bam"),
+                               nthreads=6, sortReadsByCoordinates=TRUE)
+align.stats
+```
+
+#peaks
+```{r}
+if(!require("MACSr",quietly=TRUE)) BiocManager::install("MACSr")
+library(MACSr)
+dir.create("peaks")
+callpeak(tfile="aligned/ctcf.bam",
+         gsize="dm", outdir = "peaks", name = "ctcf")
+peaks <- rtracklayer::import("peaks/ctcf_peaks.narrowPeak") 
+```
+
+#Report
+```{r}
+#reads mapped
+mapped <- align.stats["Mapped_reads",1]
+mapped
+total <- align.stats["Total_reads",1]
+percent <- mapped/total*100
+percent
+#nb peaks 
+nb_peaks <- length(peaks)
+nb_peaks
+#plot 
+query_results <- query(ah, c("Drosophila", "EnsDb"))
+ensdb <- ah[["AH113629"]]
+genes_fly <- genes(ensdb)
+o <- findOverlaps(peaks, genes_fly)
+peak_in_gene <- peaks[queryHits(o)[1]]
+plotSignalTracks(list(CTFC="aligned/ctcf.bam"), region=peak_in_gene[1], extend=5000, tracks.params=list(ylim=c(0,50)))
+
+```
