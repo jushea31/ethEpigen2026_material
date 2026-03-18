@@ -1,0 +1,92 @@
+---
+title: "assignment"
+output: html_document
+date: "2026-03-15"
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r}
+suppressPackageStartupMessages({
+  library(AnnotationHub)
+  library(ensembldb)
+  library(GenomicRanges)
+  library(epiwraps)
+  library(rtracklayer)
+  library(ggplot2)
+  library(GenomeInfoDb)
+})
+ah <- AnnotationHub(localHub=TRUE)
+ensdb <- ah[["AH89211"]]
+```
+
+#Downloading peaks
+```{r}
+mESC_p300    <- import("https://www.encodeproject.org/files/ENCFF179FJG/@@download/ENCFF179FJG.bed.gz", format = "narrowPeak")
+mESC_H3K27ac <- import("https://www.encodeproject.org/files/ENCFF360VIS/@@download/ENCFF360VIS.bed.gz", format = "narrowPeak")
+mESC_H3K27me3 <- import("https://www.encodeproject.org/files/ENCFF008XKX/@@download/ENCFF008XKX.bed.gz", format = "narrowPeak")
+liver_p300    <- import("https://www.encodeproject.org/files/ENCFF340DWL/@@download/ENCFF340DWL.bed.gz", format = "narrowPeak")
+liver_H3K27ac <- import("https://www.encodeproject.org/files/ENCFF974RAJ/@@download/ENCFF974RAJ.bed.gz", format = "narrowPeak")
+liver_H3K27me3 <- import("https://www.encodeproject.org/files/ENCFF290NCY/@@download/ENCFF290NCY.bed.gz", format = "narrowPeak")
+```
+
+#1 Trancription start site overlap
+```{r}
+genes_mouse <- genes(ensdb)
+tss <- resize(genes_mouse, width=1, fix= "start")
+seqlevelsStyle(tss) <- "UCSC"
+seqlevelsStyle(mESC_H3K27ac) <- "UCSC"
+seqlevelsStyle(mESC_H3K27me3) <- "UCSC"
+seqlevelsStyle(liver_H3K27ac) <- "UCSC"
+seqlevelsStyle(liver_H3K27me3) <- "UCSC"
+seqlevelsStyle(mESC_p300) <- "UCSC"
+seqlevelsStyle(liver_p300) <- "UCSC"
+
+# overlaps proportion in mESC
+m_ac <- overlapsAny(tss, mESC_H3K27ac)
+m_me3 <- overlapsAny(tss, mESC_H3K27me3)
+mESC_ac <- mean(m_ac)
+mESC_me3 <- mean(m_me3)
+mESC_both <- mean(m_ac & m_me3)
+mESC_ac
+mESC_me3
+mESC_both
+# overlaps proportion in liver
+l_ac <- overlapsAny(tss, liver_H3K27ac)
+l_me3 <- overlapsAny(tss, liver_H3K27me3)
+liver_ac <- mean(l_ac)
+liver_me3 <- mean(l_me3)
+liver_both <- mean(l_ac & l_me3)
+liver_ac
+liver_me3
+liver_both
+print("In mESC, about 4.2% of TSS overlap H3K27ac, and 1.3% overlap H3K27me3, and none overlap both simultaneously. On the other hand, in the liver tissue 18.2% of TSS overlap H3K27ac, 13.0% overlap H3K27me3, and 1.5% overlap both. This might show that regulatory activity around promoters is differnent between different tissues. H3K27ac is associated with active promoters and enhancers, while H3K27me3 is associated with repressed chromatin. The low overlap in mESC may show that there is a distinct separation between active and repressed regulatory states at promoters. In liver, the higher overlap between the two marks may indicate a more complex regulatory state.")
+```
+
+#2 Relationship 3 signals
+```{r}
+seqlevelsStyle(liver_p300) <- "UCSC"
+seqlevelsStyle(liver_H3K27ac) <- "UCSC"
+seqlevelsStyle(liver_H3K27me3) <- "UCSC"
+peaks_mESC <- list(p300 = mESC_p300,H3K27ac = mESC_H3K27ac, H3K27me3 = mESC_H3K27me3)
+peaks_liver <- list(p300 = liver_p300, H3K27ac = liver_H3K27ac, H3K27me3=liver_H3K27me3)
+regionOverlaps(peaks_mESC)
+regionOverlaps(peaks_liver)
+print("The relationship between the signals is very different between stem cells and liver (differentiated tissue). In the liver, p300 has strong overlap with H3K27ac, wich might show that many p300 binding sites are associated with active regulatory elements. In contrast, the overlap between p300 and H3K27me3 is smaller, which is expected since H3K27me3 correlates with repressed chromatin regions. H3K27ac and H3K27me3 also show some overlap, but much less than the overlap between p300 and H3K27ac. In mESC, almost no overlap is observed between p300 and the histone marks. This suggests that there is in the liver a stronger coordination between p300 and the active mark H3K27ac.")
+```
+
+#3 Relationship between regulatory elements between tissues
+```{r}
+active_mESC <- subsetByOverlaps(mESC_p300, mESC_H3K27ac)
+active_liver <- subsetByOverlaps(liver_p300, liver_H3K27ac)
+prop_mESC_in_liver <- sum(overlapsAny(active_mESC, active_liver)) / length(active_mESC)
+prop_liver_in_mESC <- sum(overlapsAny(active_liver, active_mESC)) / length(active_liver)
+prop_mESC_in_liver
+prop_liver_in_mESC
+active_list <- list(mESC_active = active_mESC,liver_active = active_liver)
+ComplexHeatmap::UpSet(ComplexHeatmap::make_comb_mat(regionsToUpset(active_list, nsets = 2)))
+print("I defined active regulatory elements as p300 peaks overlapping with H3K27ac peaks.About 6.4% of active regions in mESC overlap with active regions in liver, and 7.8% of active liver regions overlap with those in mESC. Therefore only a small proportion of active regulatory elements are shared between the two tissues. Most active regions seem to be tissue-specific,which shows differences in gene regulation between embryonic stem cells and differentiated liver cells. ")
+```
+
