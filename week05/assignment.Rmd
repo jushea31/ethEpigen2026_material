@@ -1,0 +1,83 @@
+---
+title: "assignment"
+output: html_document
+date: "2026-03-20"
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r}
+suppressPackageStartupMessages({
+  library(GenomicRanges)
+  library(SummarizedExperiment)
+  library(edgeR) 
+  library(epiwraps)
+  library(ggplot2)
+  library(sechm) 
+})
+```
+
+```{r}
+options(timeout = 3600)
+download.file("https://ethz-ins.org/content/mouse_mm38_hippocampus.peakCounts.SE.rds",
+              "hippocampus_data.rds",mode = "wb")
+```
+
+```{r}
+se <- readRDS("hippocampus_data.rds")
+se
+sample_names <- rownames(colData(se))
+se$stress_group <- factor(ifelse(grepl("^FSS_", sample_names), "FSS", "Control"))
+se$sex_group <- factor(ifelse(grepl("_female_", sample_names), "female", "male"))
+table(se$stress_group)
+table(se$sex_group)
+as.data.frame(colData(se))
+```
+
+#Differential analysis stress
+```{r}
+se <- readRDS("hippocampus_data.rds")
+if (is.null(rownames(se))) {
+  rownames(se) <- paste0("peak_", seq_len(nrow(se)))}
+se$stress_group <- factor(ifelse(grepl("^FSS_", sample_names), "FSS", "Control"))
+dds_stress <- edgeR::DGEList(assay(se), group = se$stress_group)
+dds_stress <- edgeR::calcNormFactors(dds_stress)
+dds_stress <- edgeR::estimateDisp(dds_stress)
+result_stress <- as.data.frame(topTags(exactTest(dds_stress), Inf))
+ggplot(result_stress, aes(logFC, -log10(FDR))) +
+  geom_point() +
+  labs(title = "Differential accessibility: FSS vs Control",
+    x = "log2 Fold Change (FSS vs Control)")
+#Top 10
+top10_stress <- head(result_stress, 10)
+top10_stress
+assay(se, "logcpm", withDimnames = FALSE) <- log1p(cpm(dds_stress))
+topRegions <- head(rownames(result_stress), 10)
+topRegions
+sechm(se, features = topRegions, assayName = "logcpm", gaps_at = "stress_group")
+```
+
+#Differential analysis sex
+```{r}
+se <- readRDS("hippocampus_data.rds")
+if (is.null(rownames(se))) {rownames(se) <- paste0("peak_", seq_len(nrow(se)))}
+se$sex_group <- factor(ifelse(grepl("_female_", sample_names), "female", "male"))
+dds_sex <- edgeR::DGEList(assay(se), group=se$sex_group)
+dds_sex <- edgeR::calcNormFactors(dds_sex)
+dds_sex <- edgeR::estimateDisp(dds_sex)
+result_sex <- as.data.frame(topTags(exactTest(dds_sex), Inf))
+head(result_sex)
+ggplot(result_sex, aes(logFC, -log10(FDR))) + geom_point() +
+  labs(title= "Differential accessibility female vs male", 
+       x= "log2 Fold Change (female vs male)")
+#Top 10
+top10_stress <- head(result_sex, 10)
+top10_stress
+assay(se, "logcpm", withDimnames = FALSE) <- log1p(cpm(dds_sex))
+topRegions <- head(rownames(result_sex), 10)
+topRegions
+sechm(se, features = topRegions, assayName = "logcpm", gaps_at = "sex_group")
+```
+
