@@ -1,0 +1,123 @@
+---
+title: "assignment"
+output: html_document
+date: "2026-04-17"
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r}
+suppressPackageStartupMessages({
+  library(epiwraps)
+  library(AnnotationHub)
+  library(MotifDb)
+  library(universalmotif)
+  library(ensembldb)
+  library(ggplot2)
+  library(motifmatchr)
+  library(Biostrings)
+  library(GenomeInfoDb)
+  library(BSgenome.Mmusculus.UCSC.mm10)
+  library(limma)
+  library(betterChromVAR)
+  library(sechm)
+  library(TFBSTools)
+  library(rtracklayer)
+})
+
+ah <- AnnotationHub(localHub=TRUE)
+ensdb <- ah[["AH89211"]] # mouse ensembldb object
+```
+
+```{r, eval=FALSE}
+download.file("https://ethz-ins.org/content/w7/atac.chr19.bam", "atac.chr19.bam", mode="wb")
+download.file("https://ethz-ins.org/content/w7/atac.chr19.bam.bai", "atac.chr19.bam.bai", mode="wb")
+```
+
+Part 01:
+```{r}
+bam <- "atac.chr19.bam"
+#nucleosome-free fragments
+bam2bw(bam, output_bw = "NF_cuts.bw", paired=TRUE, binWidth=1L, type="ends", minFragLength=30, 
+       maxFragLength=120, trim=4L, extend=3L, forceSeqlevelsStyle = "Ensembl")
+#centers of mono-nucleosome fragments
+bam2bw(bam, output_bw = "mono_centers.bw", paired=TRUE, binWidth=5L, minFragLength=140, trim=4L,
+       maxFragLength=220, type="center", extend=10L, forceSeqlevelsStyle = "Ensembl")
+```
+
+```{r}
+motif <- MotifDb::query(MotifDb, c("REST","Mus"))[[1]]
+motif2 <- convert_motifs(motif, class="TFBSTools-PFMatrix")
+genome <- ah[["AH68356"]]
+chr19 <- import(genome)["19"]
+
+#matches across chr19
+moi <- motifmatchr::matchMotifs(motif2, chr19, out="positions", p.cutoff=1e-5)[[1]]
+moi <- as(setNames(moi,names(chr19)), "GRanges") 
+```
+
+```{r}
+tracks <- c(NF_cuts = "NF_cuts.bw", mono_centers = "mono_centers.bw")
+sm <- signal2Matrix(tracks, moi, w = 5, extend = 300)
+d <- meltSignals(sm[,c("NF_cuts", "mono_centers")])
+ggplot(d, aes(position, mean, colour = sample)) + geom_line(linewidth = 1.2) +labs(
+    title = "ATAC-seq signal around REST motifs",
+    x = "Position relative to motif center (bp)",
+    y = "Mean signal",
+    colour = "Track"
+  )
+```
+Part 02
+```{r, eval=FALSE}
+download.file("https://ethz-ins.org/content/mouse_mm38_hippocampus.peakCounts.SE.rds", "peakCounts.rds", mode="wb")
+```
+
+```{r}
+se <- readRDS("peakCounts.rds")
+se <- GenomeInfoDb::keepStandardChromosomes(se, pruning.mode = "coarse")
+seqlevelsStyle(se) <- "UCSC"
+se <- addGCBias(se, genome=BSgenome.Mmusculus.UCSC.mm10)
+```
+
+```{r}
+motifs <- query(MotifDb, "HOCOMOCOv13")
+motifs <- do.call(TFBSTools::PWMatrixList, convert_motifs(motifs, class="TFBSTools-PWMatrix"))
+names(motifs) <- make.unique(sapply(motifs, \(x) gsub("\\..+","",x@name)))
+matches <- motifmatchr::matchMotifs(motifs, se, genome=BSgenome.Mmusculus.UCSC.mm10)
+matches
+```
+
+```{r}
+dev <- betterChromVAR(se, matches)
+dev
+```
+
+```{r}
+# keep only stressed samples to compare gender differences within the stressed group
+dev_fss <- dev[, grepl("FSS", colnames(dev))]
+dev_fss$sex_group <- ifelse(grepl("female", colnames(dev_fss)), "female", "male")
+dev_fss$sex_group <- factor(dev_fss$sex_group, levels = c("female", "male"))
+design <- model.matrix(~sex_group, data=as.data.frame(colData(dev_fss)))
+fit <- eBayes(lmFit(assay(dev_fss, "z"), design))
+res <- as.data.frame(topTable(fit, number = Inf))
+res$motif <- row.names(res)
+```
+
+```{r}
+#top motifs
+ggplot(head(res, 15), aes(logFC, -log10(adj.P.Val), label = motif)) +
+  geom_point() +
+  geom_text(nudge_y = 0.2, size = 3) +
+  labs(
+    title = "Differential motif accessibility: male vs female",
+    x = "logFC",
+    y = "-log10 adjusted p-value"
+  )
+```
+
+```{r}
+top_motifs <- head(rownames(res), 10)
+sechm(dev_fss,top_motifs,gaps_at = "sex_group",assayName = "z")
+```
