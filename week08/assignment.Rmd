@@ -1,0 +1,130 @@
+---
+title: "assignment"
+output: html_document
+date: "2026-04-26"
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r}
+
+suppressPackageStartupMessages({
+  library(epiwraps)
+  library(ggplot2)
+  library(AnnotationHub)
+  library(ensembldb)
+  library(edgeR)
+  library(rtracklayer)
+  library(BiocParallel)
+  library(bsseq)  
+  library(DMRcate)
+})
+```
+
+```{r, download, eval=FALSE}
+options(timeout = 6000)
+download.file("https://ethz-ins.org/content/w11_practical.zip", "w11_practical.zip")
+unzip("w11_practical.zip") 
+```
+
+```{r, load bigwigs}
+DNAme <- readRDS("comparison/DNAme.rds")
+tracks <- list(ATAC="comparison/ATAC.bw",
+               H3K27ac="comparison/H3K27ac.bw",
+               H3K4me3="comparison/H3K4me3.bw",
+               DNAme=DNAme)
+```
+
+```{r, annotation}
+ah <- AnnotationHub()
+ensdb <- ah[["AH89211"]] # GRCm38
+```
+
+```{r}
+bs <- readRDS("ESC_astrocytes_BSseq.rds")
+bs <- bs[rowSums(assay(bs,"Cov")>0)==ncol(bs),]
+design <- model.matrix(~celltype, data=pData(bs)) 
+methdesign <- modelMatrixMeth(design)
+bs <- BSmooth(bs, BPPARAM=MulticoreParam(4, progress=TRUE))
+```
+
+```{r}
+seqAnnot <- sequencing.annotate(bs, methdesign, all.cov=TRUE, coef="celltypeastrocytes")
+dmrcateRes <- dmrcate(seqAnnot, C=2, min.cpgs=5)
+dmrRanges <- extractRanges(dmrcateRes, genome="hg19")
+saveRDS(dmrRanges, "dmr.rds")
+```
+
+```{r}
+dmr_chr1 <- dmrRanges[seqnames(dmrRanges) == "chr1"]
+dmr_chr1 <- dmr_chr1[order(abs(dmr_chr1$meandiff), decreasing = TRUE)]
+top5_dmrs <- head(dmr_chr1, 5)
+top5_dmrs
+```
+
+```{r}
+genes <- readRDS("hg19_chr1_genes.rds")
+genes_in_dmrs <- genes[overlapsAny(genes, top5_dmrs)]
+genes_in_dmrs
+```
+
+```{r}
+met_genes <- bsseq::getMeth(bs, regions = genes_in_dmrs, what = "perRegion")
+rownames(met_genes) <- genes_in_dmrs$symbol
+colnames(met_genes) <- colnames(bs)
+met_genes
+```
+
+```{r}
+pheatmap(
+  met_genes,
+  name = "methylation",
+  main = "Methylation of genes overlapping top 5 chr1 DMRs"
+)
+```
+#Part02
+```{r}
+download.file("https://www.ethz-ins.org/content/ATAC_AstroVsESC_subset.rds","ATAC_AstroVsESC_subset.rds",mode = "wb")
+atac <- readRDS("ATAC_AstroVsESC_subset.rds")
+atac
+```
+
+```{r}
+seqlevelsStyle(dmr_chr1) <- seqlevelsStyle(atac)
+hits <- findOverlaps(dmr_chr1, atac)
+dmr_overlap <- dmr_chr1[queryHits(hits)]
+atac_overlap <- atac[subjectHits(hits)]
+```
+
+```{r}
+comparison <- data.frame(dmr_meandiff = dmr_overlap$meandiff,atac_logFC = atac_overlap$logFC)
+head(comparison)
+```
+```{r}
+ggplot(comparison, aes(x = dmr_meandiff, y = atac_logFC)) +
+  geom_point(alpha = 0.6) +
+  geom_hline(yintercept = 0, linetype = "dashed") +
+  geom_vline(xintercept = 0, linetype = "dashed") +
+  labs(
+    title = "Comparison of DNA methylation and ATAC accessibility changes",
+    x = "DMR methylation difference",
+    y = "ATAC logFC"
+  )
+```
+```{r}
+comparison$relationship <- ifelse(
+  comparison$dmr_meandiff > 0 & comparison$atac_logFC < 0, "opposite_expected",
+  ifelse(comparison$dmr_meandiff < 0 & comparison$atac_logFC > 0, "opposite_expected",
+         "same_direction_or_other")
+)
+
+table(comparison$relationship)
+prop.table(table(comparison$relationship))
+```
+
+```{r}
+print(" DNA methylation is often associated with reduced accessibility, here we compare DNA methylation with DNA accessibility and can see that 55% of the regions behave as expected and 45% in the opposite than expected")
+```
+
