@@ -1,0 +1,104 @@
+---
+title: "assignment"
+output: html_document
+date: "2026-05-08"
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r}
+suppressPackageStartupMessages({
+  library(GenomicRanges)
+  library(epiwraps)
+  library(ggplot2)
+  library(rGREAT) 
+})
+```
+
+```{r, eval=FALSE}
+options(timeout = 6000)
+download.file("https://ethz-ins.org/content/clustering_assignment.zip", "clustering_assignment.zip")
+unzip("clustering_assignment.zip")
+list.files()
+```
+```{r}
+tracks <- list.files(pattern = "bw$", full.names = TRUE)
+names(tracks) <- gsub("\\.bw", "", basename(tracks))
+peakfiles <- list.files(pattern = "bed$", full.names = TRUE)
+names(peakfiles) <- gsub("\\.bed", "", basename(peakfiles))
+peaks <- lapply(peakfiles, rtracklayer::import.bed)
+```
+
+```{r}
+peaks <- list.files(pattern="bed$")
+peaks <- lapply(peaks, rtracklayer::import.bed)
+peaks <- lapply(peaks, FUN=function(x) x[x$score>800])
+regions <- reduce(unlist(GRangesList(peaks)))
+```
+
+#Visualize relationship between binding of different proteins
+```{r} 
+# smaller subset to avoid crashing
+set.seed(123)
+regions_small <- sample(regions, min(1000, length(regions)))
+
+ese_small <- signal2Matrix(tracks,regions_small,extend = 1000,w = 50)
+plotEnrichedHeatmaps(ese_small, cluster_rows = TRUE, show_row_dend=TRUE )
+```
+
+# Clustering
+```{r}
+set.seed(123) 
+cl <- clusterSignalMatrices(ese_small, k=4)
+table(cl)
+rowData(ese_small)$cluster <- cl
+head(rowData(ese_small))
+```
+
+#Plot clustered heatmap
+```{r}
+plotEnrichedHeatmaps(ese_small, row_split=rowData(ese_small)$cluster, colors=c("white","darkred"),row_title= "Clusters of CREB-family binding regions")
+```
+
+
+#Plot average signal per cluster
+```{r}
+d <- meltSignals(ese_small, splitBy = cl)
+
+ggplot(d, aes(position, mean, colour = sample)) +geom_line(linewidth = 1.2) +facet_wrap(~split) +
+  labs(title = "Average CREB-family signal by cluster",x = "Position relative to region center",y = "Mean signal", colour = "Track")
+```
+
+#Different number of clusters check
+```{r}
+cl2 <- clusterSignalMatrices(ese_small, k=2:10)
+ggplot(cl2$varExplained, aes(k, varExplained)) + geom_line()
+  labs(title = "Variance explained by number of clusters",x = "Number of clusters",y = "Variance explained")
+```
+
+#Enrichment analysis
+```{r}
+split_regions <- split(rowRanges(ese_small), rowData(ese_small)$cluster)
+lengths(split_regions)
+res <- great(split_regions[["2"]], gene_sets="GO:BP", tss_source="hg38", 
+             background=regions, cores=2)
+bp <- getEnrichmentTables(res)
+head(bp)
+```
+
+#Plot top Biological Processes:
+```{r, fig.width=9, fig.height=6}
+ggplot(head(bp,15), aes(fold_enrichment, reorder(description, p_adjust), 
+                        size=observed_region_hits, color=-log10(p_adjust))) + 
+  geom_point() + scale_color_viridis_c()
+  labs(title = "GO Biological Process enrichment for cluster 1",x = "Fold enrichment",y = "Biological process",size = "Region hits",color = "-log10 adjusted p-value")
+```
+
+#Interpretation 
+```{r}
+print("The clustered heatmap and average signal profiles showed that some regions were strongly co-bound by Creb1 and Creb3L1, but other regions showed a more
+selective enrichment for Creb3. Using k = 4 clusters explained approximately 71% of the variance while keeping interpretable binding patterns. This might show that members of the CREB family share binding at certain regulatory regions but also have protein-specific occupancy at others. GO enrichment analysis of cluster 2 showed strong localized binding and was associated with GO terms related to heart contraction, blood circulation, muscle contraction, and circulatory system processes. Even though adjusted p-values were modest after multiple-testing correction, this enrichment results show that this subset of CREB-family binding regions might be linked to cardiovascular and muscle-related regulatory functions.")
+```
+
